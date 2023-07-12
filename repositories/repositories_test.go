@@ -23,7 +23,7 @@ func Config() (*sql.DB, error) {
 	if err != nil {
 		return db, err
 	}
-	_, err = db.Exec("CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, first_name TEXT, email TEXT)")
+	_, err = db.Exec("CREATE TABLE IF NOT EXISTS user (id INTEGER PRIMARY KEY, first_name TEXT, email TEXT)")
 	if err != nil {
 		return db, err
 	}
@@ -44,11 +44,11 @@ func Config() (*sql.DB, error) {
 	}
 	if count == 0 {
 
-		_, err = db.Exec("INSERT INTO users (first_name, email) VALUES ('admin', 'admin@admin.com')")
+		_, err = db.Exec("INSERT INTO user (first_name, email) VALUES ('admin', 'admin@admin.com')")
 		if err != nil {
 			return db, err
 		}
-		_, err = db.Exec("INSERT INTO users (first_name, email) VALUES ('user', 'user@user.com')")
+		_, err = db.Exec("INSERT INTO user (first_name, email) VALUES ('user', 'user@user.com')")
 		if err != nil {
 			return db, err
 		}
@@ -88,7 +88,7 @@ func TestGetAll(t *testing.T) {
 	config.DB, _ = Config()
 	defer config.DB.Close()
 
-	repoUser := NewRepositoryWithTable[User]("users")
+	repoUser := NewRepository[User]()
 	//repoRole := NewRepositoryWithTable[Role]("roles")
 
 	users, _ := repoUser.GetAll()
