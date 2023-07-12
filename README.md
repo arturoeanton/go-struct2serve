@@ -3,6 +3,13 @@ This is a small library for [echo v4](https://github.com/labstack/echo) that has
 
 You can create a custom repository or custom controller using Go compose.
 
+## Question
+
+* Why Echo? Becouse It is my favorite framwork for make web apps :P.
+* Why SQL? **I love SQL**.
+* Can you add feature? **yes**, I love you ;).
+* Why did I make this library? Because I have ***free time***, but it doesn't mean I don't love GORM :).
+* Why make this project? This project is a hobby and We use it in some minor projects. **This is fun**.
 
 ## Example 
 
