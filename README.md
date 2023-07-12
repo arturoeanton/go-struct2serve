@@ -1,5 +1,5 @@
 # go-struct2serve
-This is a small library that has a generic repository for accessing the database and populating structures in golang and has a generic controller and service.
+This is a small library for [echo v4](https://github.com/labstack/echo) that has a generic repository for accessing the database and populating structures in golang and has a generic controller and service.
 
 You can create a custom repository or custom controller using Go compose.
 
