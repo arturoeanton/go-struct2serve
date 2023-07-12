@@ -2,7 +2,10 @@ module github.com/arturoeanton/go-struct2serve
 
 go 1.20
 
-require github.com/labstack/echo/v4 v4.10.2
+require (
+	github.com/labstack/echo/v4 v4.10.2
+	github.com/mattn/go-sqlite3 v1.14.17
+)
 
 require (
 	github.com/labstack/gommon v0.4.0 // indirect
