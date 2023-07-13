@@ -31,6 +31,7 @@ type Repository[T any] struct {
 	sqlUpdate        string
 	sqlDelete        string
 	tagName          map[string]string
+	idName           string
 }
 
 func NewRepository[T any]() *Repository[T] {
@@ -50,6 +51,7 @@ func NewRepositoryWithTable[T any](table string) *Repository[T] {
 	itemType := reflect.TypeOf(*item)
 
 	r.tagName = make(map[string]string, itemType.NumField())
+	r.idName = "ID"
 	for i := 0; i < itemType.NumField(); i++ {
 		field := itemType.Field(i)
 		tag := field.Tag.Get("db")
@@ -58,6 +60,12 @@ func NewRepositoryWithTable[T any](table string) *Repository[T] {
 		}
 		r.tags = append(r.tags, tag)
 		r.tagName[tag] = field.Name
+
+		tagSqlId := field.Tag.Get("sql_id")
+		if tagSqlId == "true" {
+			r.idName = field.Name
+		}
+
 	}
 
 	sqlCreate := "INSERT INTO " + table + " ("
@@ -100,17 +108,19 @@ func (r *Repository[T]) GetAll() ([]*T, error) {
 
 	rows, err := conn.QueryContext(context.Background(), r.sqlAll)
 	if err != nil {
-		log.Printf("Error al ejecutar la consulta: %v", err)
+		log.Printf("Error al ejecutar la consulta[009]: %v", err)
 		return nil, err
 	}
 	defer rows.Close()
 	items := []*T{}
 	for rows.Next() {
 		item := CreateNewElement[T]()
-		v, err := Scan2(reflect.TypeOf(*item), rows)
+		v, err := Scan2(reflect.TypeOf(*item), rows, r.idName)
 		//err := Scan[T](item, rows)
 		if err != nil {
-			log.Printf("Error al escanear la fila: %v", err)
+			if config.FlagLog {
+				log.Printf("Error al escanear la fila[008]: %v", err)
+			}
 			return nil, err
 		}
 		items = append(items, v.Addr().Interface().(*T))
@@ -128,17 +138,21 @@ func (r *Repository[T]) GetByCriteria(criteria string, args ...interface{}) ([]*
 
 	rows, err := conn.QueryContext(context.Background(), r.sqlGetByCriteria+" "+criteria, args...)
 	if err != nil {
-		log.Printf("Error al ejecutar la consulta: %v", err)
+		if config.FlagLog {
+			log.Printf("Error al ejecutar la consulta[007]: %v", err)
+		}
 		return nil, err
 	}
 	defer rows.Close()
 	items := []*T{}
 	for rows.Next() {
 		item := CreateNewElement[T]()
-		v, err := Scan2(reflect.TypeOf(*item), rows)
+		v, err := Scan2(reflect.TypeOf(*item), rows, r.idName)
 		//err := Scan[T](item, rows)
 		if err != nil {
-			log.Printf("Error al escanear la fila: %v", err)
+			if config.FlagLog {
+				log.Printf("Error al escanear la fila[006]: %v", err)
+			}
 			return nil, err
 		}
 		items = append(items, v.Addr().Interface().(*T))
@@ -155,12 +169,14 @@ func (r *Repository[T]) GetByID(id interface{}) (*T, error) {
 	defer conn.Close()
 	row := conn.QueryRowContext(context.Background(), r.sqlGetByID, id)
 	item := CreateNewElement[T]()
-	v, err := Scan2(reflect.TypeOf(*item), row)
+	v, err := Scan2(reflect.TypeOf(*item), row, r.idName)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil // No se encontró el usuario
 		}
-		log.Printf("Error al escanear la fila: %v", err)
+		if config.FlagLog {
+			log.Printf("Error al escanear la fila[005]: %v", err)
+		}
 		return nil, err
 	}
 	return v.Addr().Interface().(*T), nil
@@ -179,7 +195,9 @@ func (r *Repository[T]) Create(item *T) (int64, error) {
 
 	result, err := conn.ExecContext(context.Background(), r.sqlCreate, fieldsValues...)
 	if err != nil {
-		log.Printf("Error al crear el item: %v", err)
+		if config.FlagLog {
+			log.Printf("Error al crear el item: %v", err)
+		}
 		return 0, err
 	}
 
@@ -198,9 +216,21 @@ func (r *Repository[T]) Update(item *T) error {
 	defer conn.Close()
 	fieldsValues := []interface{}{}
 	for _, tag := range r.tags {
-		fieldsValues = append(fieldsValues, reflect.ValueOf(item).FieldByName(r.tagName[tag]).Interface())
+		value := reflect.ValueOf(*item).FieldByName(r.tagName[tag])
+		field, b := reflect.TypeOf(*item).FieldByName(r.tagName[tag])
+		if b {
+			tagSqlUpdateValue := field.Tag.Get("sql_update_value")
+			if tagSqlUpdateValue != "" {
+				tagSqlUpdateValueArray := strings.Split(tagSqlUpdateValue, ".")
+				if len(tagSqlUpdateValueArray) == 2 {
+					value = reflect.ValueOf(*item).FieldByName(tagSqlUpdateValueArray[0]).FieldByName(tagSqlUpdateValueArray[1])
+				}
+			}
+		}
+
+		fieldsValues = append(fieldsValues, value.Interface())
 	}
-	fieldsValues = append(fieldsValues, reflect.ValueOf(item).FieldByName("ID").Interface())
+	fieldsValues = append(fieldsValues, reflect.ValueOf(*item).FieldByName(r.idName).Interface())
 
 	_, err = conn.ExecContext(context.Background(), r.sqlUpdate, fieldsValues...)
 	if err != nil {
@@ -232,7 +262,7 @@ func CreateNewElement[T any]() *T {
 	return v.Addr().Interface().(*T)
 }
 
-func ProcessTagSql(item interface{}) {
+func ProcessTagSql(item interface{}, fieldIdName string) {
 	itemValue := reflect.ValueOf(item).Elem()
 	itemType := itemValue.Type()
 
@@ -249,8 +279,9 @@ func ProcessTagSql(item interface{}) {
 				return
 			}
 			defer conn.Close()
-			fmt.Println(tag, itemValue.FieldByName("ID").Interface())
-
+			if config.FlagLog {
+				log.Println(tag, itemValue.FieldByName(fieldIdName).Interface())
+			}
 			tagParam := field.Tag.Get("sql_param")
 			arrayParam := []interface{}{}
 			if tagParam != "" {
@@ -259,12 +290,12 @@ func ProcessTagSql(item interface{}) {
 					arrayParam = append(arrayParam, itemValue.FieldByName(param).Interface())
 				}
 			} else {
-				arrayParam = append(arrayParam, itemValue.FieldByName("ID").Interface())
+				arrayParam = append(arrayParam, itemValue.FieldByName(fieldIdName).Interface())
 			}
 
 			rows, err := conn.QueryContext(context.Background(), tag, arrayParam...)
 			if err != nil {
-				log.Printf("Error al ejecutar la consulta: %v", err)
+				log.Printf("Error al ejecutar la consulta[004]: %v", err)
 				return
 			}
 			defer rows.Close()
@@ -277,7 +308,7 @@ func ProcessTagSql(item interface{}) {
 
 				// Itera sobre los resultados de la consulta
 				for rows.Next() {
-					newElem, _ := Scan2(sliceType, rows)
+					newElem, _ := Scan2(sliceType, rows, fieldIdName)
 					sliceVal = reflect.Append(sliceVal, newElem)
 				}
 
@@ -288,9 +319,11 @@ func ProcessTagSql(item interface{}) {
 			if fieldType.Kind() == reflect.Ptr {
 				if rows.Next() {
 					ptrType := fieldType.Elem()
-					elemVal, err := Scan2(ptrType, rows)
+					elemVal, err := Scan2(ptrType, rows, fieldIdName)
 					if err != nil {
-						log.Printf("Error al escanear la fila: %v", err)
+						if config.FlagLog {
+							log.Printf("Error al escanear la fila[003]: %v", err)
+						}
 						return
 					}
 					ptrVal := elemVal.Addr()
@@ -302,9 +335,11 @@ func ProcessTagSql(item interface{}) {
 
 			if fieldType.Kind() == reflect.Struct {
 				if rows.Next() {
-					elemVal, err := Scan2(fieldType, rows)
+					elemVal, err := Scan2(fieldType, rows, fieldIdName)
 					if err != nil {
-						log.Printf("Error al escanear la fila: %v", err)
+						if config.FlagLog {
+							log.Printf("Error al escanear la fila[002]: %v", err)
+						}
 						return
 					}
 					itemValue.FieldByName(field.Name).Set(elemVal)
@@ -319,7 +354,7 @@ type iRow interface {
 	Scan(dest ...any) error
 }
 
-func Scan2(itemType reflect.Type, row iRow) (reflect.Value, error) {
+func Scan2(itemType reflect.Type, row iRow, fieldIdName string) (reflect.Value, error) {
 	item := reflect.New(itemType).Elem()
 	l := itemType.NumField()
 	values := make([]interface{}, 0)
@@ -337,9 +372,11 @@ func Scan2(itemType reflect.Type, row iRow) (reflect.Value, error) {
 
 	err := row.Scan(values...)
 	if err != nil {
-		log.Printf("Error al escanear la fila: %v", err)
+		if config.FlagLog {
+			log.Printf("Error al escanear la fila[001]: %v", err)
+		}
 	}
 
-	ProcessTagSql(item.Addr().Interface())
+	ProcessTagSql(item.Addr().Interface(), fieldIdName)
 	return item, err
 }
