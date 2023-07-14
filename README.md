@@ -18,11 +18,14 @@ You can create a custom repository or custom controller using Go compose.
 package models
 
 type User struct {
-	ID        int    `json:"id" db:"id"`
-	FirstName string `json:"first_name" db:"first_name"`
-	Email     string `json:"email" db:"email"`
-	Roles     []Role `json:"roles" sql:"select * from roles r where r.id in (select role_id from user_roles where user_id = ?)"`
+	UserID    int     `json:"id" db:"id" sql_id:"true"` // mark this field as id with tag sql_id:"true"
+	FirstName string  `json:"first_name" db:"first_name"`
+	Email     string  `json:"email" db:"email"`
+	Roles     *[]Role `json:"roles,omitempty" sql:"select * from roles r where r.id in (select role_id from user_roles where user_id = ?)"`
+	GroupId   *int    `json:"-" db:"group_id" sql_update_value:"Group.ID"` // mark this field as id with tag sql_update_value:"Group.ID" because json not send nil values json:"-"
+	Group     *Group  `json:"group,omitempty" sql:"select * from groups where id = ?" sql_param:"GroupId"`
 }
+
 ```
 
 #### role_model.go
@@ -32,6 +35,18 @@ package models
 type Role struct {
 	ID   int    `json:"id" db:"id"`
 	Name string `json:"name" db:"name"`
+	Users *[]User `json:"users,omitempty" sql:"select * from user where id in (select user_id from user_roles where role_id = ?)"`
+}
+```
+
+#### group_model.go
+``` go
+package models
+
+type Group struct {
+	ID    int     `json:"id" db:"id"`
+	Name  string  `json:"name" db:"name"`
+	Users *[]User `json:"users,omitempty" sql:"select * from user where group_id = ?"`
 }
 ```
 
