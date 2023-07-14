@@ -2,6 +2,7 @@ package repositories
 
 import (
 	"database/sql"
+	"encoding/json"
 	"os"
 	"testing"
 
@@ -88,22 +89,24 @@ func MockSqlite() (*sql.DB, error) {
 }
 
 type User struct {
-	IDUser    int    `json:"id" db:"id" sql_id:"true"` // mark this field as id with tag sql_id:"true"
-	FirstName string `json:"first_name" db:"first_name"`
-	Email     string `json:"email" db:"email"`
-	Roles     []Role `json:"roles" sql:"select * from roles r where r.id in (select role_id from user_roles where user_id = ?)"`
-	GroupId   *int   `json:"-" db:"group_id" sql_update_value:"Group.ID"` // mark this field as id with tag sql_update_value:"Group.ID" because json not send nil values json:"-"
-	Group     Group  `json:"group" sql:"select * from groups where id = ?" sql_param:"GroupId"`
+	UserID    int     `json:"id" db:"id" sql_id:"true"` // mark this field as id with tag sql_id:"true"
+	FirstName string  `json:"first_name" db:"first_name"`
+	Email     string  `json:"email" db:"email"`
+	Roles     *[]Role `json:"roles,omitempty" sql:"select * from roles r where r.id in (select role_id from user_roles where user_id = ?)"`
+	GroupId   *int    `json:"-" db:"group_id" sql_update_value:"Group.ID"` // mark this field as id with tag sql_update_value:"Group.ID" because json not send nil values json:"-"
+	Group     *Group  `json:"group,omitempty" sql:"select * from groups where id = ?" sql_param:"GroupId"`
 }
 
 type Role struct {
-	ID   int    `json:"id" db:"id"`
-	Name string `json:"name" db:"name"`
+	ID    int     `json:"id" db:"id"`
+	Name  string  `json:"name" db:"name"`
+	Users *[]User `json:"users,omitempty" sql:"select * from user where id in (select user_id from user_roles where role_id = ?)"`
 }
 
 type Group struct {
-	ID   int    `json:"id" db:"id"`
-	Name string `json:"name" db:"name"`
+	ID    int     `json:"id" db:"id"`
+	Name  string  `json:"name" db:"name"`
+	Users *[]User `json:"users,omitempty" sql:"select * from user where group_id = ?"`
 }
 
 func TestGetAll(t *testing.T) {
@@ -128,9 +131,21 @@ func TestGetByID(t *testing.T) {
 
 	repoUser := NewRepository[User]()
 	repoRole := NewRepositoryWithTable[Role]("roles")
+	repoUser.SetDepth(2)
 	user, _ := repoUser.GetByID(1)
-	if user.IDUser != 1 {
+	if user.UserID != 1 {
 		t.Error("user is empty")
+	}
+
+	jsonData, err := json.Marshal(user)
+	if err != nil {
+		t.Error(err)
+	}
+	outjson := `{"id":1,"first_name":"admin","email":"admin@admin.com","roles":[{"id":1,"name":"admin"}],"group":{"id":1,"name":"group1"}}`
+	t.Log("[TestGetByID]***", string(jsonData))
+
+	if string(jsonData) != outjson {
+		t.Error("json not match")
 	}
 
 	if user.FirstName != "admin" {

@@ -3,7 +3,6 @@ package repositories
 import (
 	"context"
 	"database/sql"
-	"fmt"
 	"log"
 	"reflect"
 	"strings"
@@ -19,6 +18,13 @@ type IRepository[T any] interface {
 	Create(item *T) (int64, error)
 	Update(item *T) error
 	Delete(id interface{}) error
+
+	GetTableName() string
+	GetTags() []string
+	GetTagsName() map[string]string
+
+	SetDepth(depth int)
+	GetDepth() int
 }
 
 type Repository[T any] struct {
@@ -31,7 +37,7 @@ type Repository[T any] struct {
 	sqlUpdate        string
 	sqlDelete        string
 	tagName          map[string]string
-	idName           string
+	defaultDepth     int
 }
 
 func NewRepository[T any]() *Repository[T] {
@@ -41,17 +47,16 @@ func NewRepository[T any]() *Repository[T] {
 }
 
 func NewRepositoryWithTable[T any](table string) *Repository[T] {
-
 	item := CreateNewElement[T]()
 
 	r := &Repository[T]{
-		table: table,
+		table:        table,
+		defaultDepth: 2,
 	}
 
 	itemType := reflect.TypeOf(*item)
 
 	r.tagName = make(map[string]string, itemType.NumField())
-	r.idName = "ID"
 	for i := 0; i < itemType.NumField(); i++ {
 		field := itemType.Field(i)
 		tag := field.Tag.Get("db")
@@ -60,11 +65,6 @@ func NewRepositoryWithTable[T any](table string) *Repository[T] {
 		}
 		r.tags = append(r.tags, tag)
 		r.tagName[tag] = field.Name
-
-		tagSqlId := field.Tag.Get("sql_id")
-		if tagSqlId == "true" {
-			r.idName = field.Name
-		}
 
 	}
 
@@ -115,7 +115,7 @@ func (r *Repository[T]) GetAll() ([]*T, error) {
 	items := []*T{}
 	for rows.Next() {
 		item := CreateNewElement[T]()
-		v, err := Scan2(reflect.TypeOf(*item), rows, r.idName)
+		v, err := Scan2(reflect.TypeOf(*item), rows, r.defaultDepth)
 		//err := Scan[T](item, rows)
 		if err != nil {
 			if config.FlagLog {
@@ -147,7 +147,7 @@ func (r *Repository[T]) GetByCriteria(criteria string, args ...interface{}) ([]*
 	items := []*T{}
 	for rows.Next() {
 		item := CreateNewElement[T]()
-		v, err := Scan2(reflect.TypeOf(*item), rows, r.idName)
+		v, err := Scan2(reflect.TypeOf(*item), rows, r.defaultDepth)
 		//err := Scan[T](item, rows)
 		if err != nil {
 			if config.FlagLog {
@@ -169,7 +169,7 @@ func (r *Repository[T]) GetByID(id interface{}) (*T, error) {
 	defer conn.Close()
 	row := conn.QueryRowContext(context.Background(), r.sqlGetByID, id)
 	item := CreateNewElement[T]()
-	v, err := Scan2(reflect.TypeOf(*item), row, r.idName)
+	v, err := Scan2(reflect.TypeOf(*item), row, r.defaultDepth)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil // No se encontró el usuario
@@ -215,6 +215,16 @@ func (r *Repository[T]) Update(item *T) error {
 	}
 	defer conn.Close()
 	fieldsValues := []interface{}{}
+	itemValue := reflect.ValueOf(item).Elem()
+	itemType := itemValue.Type()
+	fieldIdName := "ID"
+	for i := 0; i < itemType.NumField(); i++ {
+		tagID := itemType.Field(i).Tag.Get("sql_id")
+		if tagID == "true" {
+			fieldIdName = itemType.Field(i).Name
+			break
+		}
+	}
 	for _, tag := range r.tags {
 		value := reflect.ValueOf(*item).FieldByName(r.tagName[tag])
 		field, b := reflect.TypeOf(*item).FieldByName(r.tagName[tag])
@@ -223,14 +233,19 @@ func (r *Repository[T]) Update(item *T) error {
 			if tagSqlUpdateValue != "" {
 				tagSqlUpdateValueArray := strings.Split(tagSqlUpdateValue, ".")
 				if len(tagSqlUpdateValueArray) == 2 {
-					value = reflect.ValueOf(*item).FieldByName(tagSqlUpdateValueArray[0]).FieldByName(tagSqlUpdateValueArray[1])
+					v := reflect.ValueOf(*item).FieldByName(tagSqlUpdateValueArray[0])
+					if v.Kind() == reflect.Ptr {
+						v = v.Elem()
+					}
+
+					value = v.FieldByName(tagSqlUpdateValueArray[1])
 				}
 			}
 		}
 
 		fieldsValues = append(fieldsValues, value.Interface())
 	}
-	fieldsValues = append(fieldsValues, reflect.ValueOf(*item).FieldByName(r.idName).Interface())
+	fieldsValues = append(fieldsValues, reflect.ValueOf(*item).FieldByName(fieldIdName).Interface())
 
 	_, err = conn.ExecContext(context.Background(), r.sqlUpdate, fieldsValues...)
 	if err != nil {
@@ -256,16 +271,48 @@ func (r *Repository[T]) Delete(id interface{}) error {
 	return nil
 }
 
+func (r *Repository[T]) GetTableName() string {
+	return r.table
+}
+
+func (r *Repository[T]) GetTags() []string {
+	return r.tags
+}
+
+func (r *Repository[T]) GetTagsName() map[string]string {
+	// clone map
+	m := make(map[string]string)
+	for k, v := range r.tagName {
+		m[k] = v
+	}
+	return m
+}
+
+func (r *Repository[T]) SetDepth(depth int) {
+	r.defaultDepth = depth
+}
+func (r *Repository[T]) GetDepth() int {
+	return r.defaultDepth
+}
+
 func CreateNewElement[T any]() *T {
 	t := reflect.TypeOf((*T)(nil)).Elem()
 	v := reflect.New(t).Elem()
 	return v.Addr().Interface().(*T)
 }
 
-func ProcessTagSql(item interface{}, fieldIdName string) {
+func ProcessTagSql(item interface{}, depth int) {
 	itemValue := reflect.ValueOf(item).Elem()
 	itemType := itemValue.Type()
 
+	fieldIdName := "ID"
+	for i := 0; i < itemType.NumField(); i++ {
+		tagID := itemType.Field(i).Tag.Get("sql_id")
+		if tagID == "true" {
+			fieldIdName = itemType.Field(i).Name
+			break
+		}
+	}
 	for i := 0; i < itemType.NumField(); i++ {
 		func(i int) {
 			field := itemType.Field(i)
@@ -308,7 +355,7 @@ func ProcessTagSql(item interface{}, fieldIdName string) {
 
 				// Itera sobre los resultados de la consulta
 				for rows.Next() {
-					newElem, _ := Scan2(sliceType, rows, fieldIdName)
+					newElem, _ := Scan2(sliceType, rows, depth)
 					sliceVal = reflect.Append(sliceVal, newElem)
 				}
 
@@ -317,25 +364,42 @@ func ProcessTagSql(item interface{}, fieldIdName string) {
 				return
 			}
 			if fieldType.Kind() == reflect.Ptr {
-				if rows.Next() {
-					ptrType := fieldType.Elem()
-					elemVal, err := Scan2(ptrType, rows, fieldIdName)
-					if err != nil {
-						if config.FlagLog {
-							log.Printf("Error al escanear la fila[003]: %v", err)
+				ptrType := fieldType.Elem()
+				if ptrType.Kind() == reflect.Struct {
+					if rows.Next() {
+						log.Println(ptrType)
+						elemVal, err := Scan2(ptrType, rows, depth)
+						if err != nil {
+							if config.FlagLog {
+								log.Printf("Error al escanear la fila[003]: %v", err)
+							}
+							return
 						}
+						ptrVal := elemVal.Addr()
+						itemValue.FieldByName(field.Name).Set(ptrVal)
 						return
 					}
-					ptrVal := elemVal.Addr()
-					fmt.Println(ptrVal)
-					itemValue.FieldByName(field.Name).Set(ptrVal)
 				}
-				return
+				if ptrType.Kind() == reflect.Slice {
+					sliceType := ptrType.Elem()
+					sliceVal := reflect.MakeSlice(ptrType, 0, 0)
+
+					// Itera sobre los resultados de la consulta
+					for rows.Next() {
+						newElem, _ := Scan2(sliceType, rows, depth)
+						sliceVal = reflect.Append(sliceVal, newElem)
+					}
+					ptr := reflect.New(sliceVal.Type())
+					ptr.Elem().Set(sliceVal)
+					// Establece el valor del campo en la estructura
+					itemValue.FieldByName(field.Name).Set(ptr)
+					return
+				}
 			}
 
 			if fieldType.Kind() == reflect.Struct {
 				if rows.Next() {
-					elemVal, err := Scan2(fieldType, rows, fieldIdName)
+					elemVal, err := Scan2(fieldType, rows, depth)
 					if err != nil {
 						if config.FlagLog {
 							log.Printf("Error al escanear la fila[002]: %v", err)
@@ -354,7 +418,7 @@ type iRow interface {
 	Scan(dest ...any) error
 }
 
-func Scan2(itemType reflect.Type, row iRow, fieldIdName string) (reflect.Value, error) {
+func Scan2(itemType reflect.Type, row iRow, depth int) (reflect.Value, error) {
 	item := reflect.New(itemType).Elem()
 	l := itemType.NumField()
 	values := make([]interface{}, 0)
@@ -376,7 +440,9 @@ func Scan2(itemType reflect.Type, row iRow, fieldIdName string) (reflect.Value, 
 			log.Printf("Error al escanear la fila[001]: %v", err)
 		}
 	}
-
-	ProcessTagSql(item.Addr().Interface(), fieldIdName)
+	depth = depth - 1
+	if depth > 0 {
+		ProcessTagSql(item.Addr().Interface(), depth)
+	}
 	return item, err
 }
