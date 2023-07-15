@@ -12,11 +12,11 @@ import (
 )
 
 var (
-	S2S              string = "s2s"
-	S2S_ID           string = "s2s_id"
-	S2S_TABLE_NAME   string = "s2s_table_name"
-	S2S_UPDATE_VALUE string = "s2s_update_value"
-	S2S_PARAM        string = "s2s_param"
+	S2S            string = "s2s"
+	S2S_ID         string = "s2s_id"
+	S2S_TABLE_NAME string = "s2s_table_name"
+	S2S_REF_VALUE  string = "s2s_ref_value"
+	S2S_PARAM      string = "s2s_param"
 )
 
 type IRepository[T any] interface {
@@ -231,7 +231,24 @@ func (r *Repository[T]) Create(item *T) (int64, error) {
 	defer conn.Close()
 	fieldsValues := []interface{}{}
 	for _, tag := range r.tags {
-		fieldsValues = append(fieldsValues, reflect.ValueOf(*item).FieldByName(r.tagName[tag]).Interface())
+		value := reflect.ValueOf(*item).FieldByName(r.tagName[tag])
+		field, b := reflect.TypeOf(*item).FieldByName(r.tagName[tag])
+		if b {
+			tagSqlUpdateValue := field.Tag.Get(S2S_REF_VALUE)
+			if tagSqlUpdateValue != "" {
+				tagSqlUpdateValueArray := strings.Split(tagSqlUpdateValue, ".")
+				if len(tagSqlUpdateValueArray) == 2 {
+					v := reflect.ValueOf(*item).FieldByName(tagSqlUpdateValueArray[0])
+					if v.Kind() == reflect.Ptr {
+						v = v.Elem()
+					}
+
+					value = v.FieldByName(tagSqlUpdateValueArray[1])
+				}
+			}
+		}
+
+		fieldsValues = append(fieldsValues, value.Interface())
 	}
 
 	result, err := conn.ExecContext(context.Background(), r.sqlCreate, fieldsValues...)
@@ -270,7 +287,7 @@ func (r *Repository[T]) Update(item *T) error {
 		value := reflect.ValueOf(*item).FieldByName(r.tagName[tag])
 		field, b := reflect.TypeOf(*item).FieldByName(r.tagName[tag])
 		if b {
-			tagSqlUpdateValue := field.Tag.Get(S2S_UPDATE_VALUE)
+			tagSqlUpdateValue := field.Tag.Get(S2S_REF_VALUE)
 			if tagSqlUpdateValue != "" {
 				tagSqlUpdateValueArray := strings.Split(tagSqlUpdateValue, ".")
 				if len(tagSqlUpdateValueArray) == 2 {

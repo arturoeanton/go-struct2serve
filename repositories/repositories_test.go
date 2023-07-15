@@ -93,7 +93,7 @@ type User struct {
 	FirstName string  `json:"first_name" db:"first_name"`
 	Email     string  `json:"email" db:"email"`
 	Roles     *[]Role `json:"roles,omitempty" s2s:"id in (select role_id from user_roles where user_id = ?)"` // not use s2s_param becuase s2s_param is the id of Struct
-	GroupId   *int    `json:"-" db:"group_id" s2s_update_value:"Group.ID"`                                    // mark this field as id with tag s2s_update_value:"Group.ID" because json not send nil values json:"-"
+	GroupId   *int    `json:"-" db:"group_id" s2s_ref_value:"Group.ID"`                                       // mark this field as id with tag s2s_ref_value:"Group.ID" because json not send nil values json:"-"
 	Group     *Group  `json:"group,omitempty" s2s:"id = ?" s2s_param:"GroupId"`                               // use s2s_param becuase we need use GroupId value
 	//Group *Group `json:"group,omitempty" s2s:"select * from groups where id = ?" sql_param:"GroupId"`
 }
@@ -214,7 +214,7 @@ func TestUpdate(t *testing.T) {
 	repoUser := NewRepository[User]()
 	user, _ := repoUser.GetByID(1)
 	user.FirstName = "admin2"
-	user.GroupId = nil // set nil for try s2s_update_value:"Group.ID" (this way I simulate json reqeust, because json not send nil values)
+	user.GroupId = nil // set nil for try s2s_ref_value:"Group.ID" (this way I simulate json reqeust, because json not send nil values)
 	err := repoUser.Update(user)
 
 	if err != nil {
