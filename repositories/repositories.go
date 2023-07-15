@@ -11,6 +11,14 @@ import (
 	"github.com/arturoeanton/go-struct2serve/utils"
 )
 
+var (
+	S2S              string = "s2s"
+	S2S_ID           string = "s2s_id"
+	S2S_TABLE_NAME   string = "s2s_table_name"
+	S2S_UPDATE_VALUE string = "s2s_update_value"
+	S2S_PARAM        string = "s2s_param"
+)
+
 type IRepository[T any] interface {
 	GetAll() ([]*T, error)
 	GetByID(id interface{}) (*T, error)
@@ -23,7 +31,7 @@ type IRepository[T any] interface {
 	GetTags() []string
 	GetTagsName() map[string]string
 
-	SetDepth(depth int)
+	SetDepth(depth int) IRepository[T]
 	GetDepth() int
 }
 
@@ -87,16 +95,46 @@ func NewRepositoryWithTable[T any](table string) *Repository[T] {
 		sqlCreate += "?"
 	}
 	sqlCreate += ")"
-
-	fieldList := strings.Join(r.tags, ", ")
-	r.sqlAll = "SELECT " + fieldList + " FROM " + table
-	r.sqlGetByCriteria = "SELECT " + fieldList + " FROM " + table + " WHERE "
-	r.sqlGetByID = "SELECT " + fieldList + " FROM " + table + " WHERE id = ?"
+	itemType = reflect.TypeOf(*item)
+	r.sqlAll = createSelectSection(itemType) + createFromSection(itemType)
+	r.sqlGetByCriteria = createSelectSection(itemType) + createFromSection(itemType) + " WHERE "
+	r.sqlGetByID = createSelectSection(itemType) + createFromSection(itemType) + " WHERE id = ?"
 	r.sqlCreate = sqlCreate
 	r.sqlUpdate = sqlUpdate
 	r.sqlDelete = "DELETE FROM " + table + " WHERE id = ?"
 
 	return r
+}
+
+func createFromSection(itemType reflect.Type) string {
+	tableName := utils.ToSnakeCase(itemType.Name())
+	for i := 0; i < itemType.NumField(); i++ {
+		field := itemType.Field(i)
+		tag := field.Tag.Get(S2S_TABLE_NAME)
+		if tag != "" {
+			tableName = tag
+			break
+		}
+	}
+
+	return " FROM " + tableName + "  "
+}
+
+func createSelectSection(itemType reflect.Type) string {
+
+	fieldList := ""
+	for i := 0; i < itemType.NumField(); i++ {
+		field := itemType.Field(i)
+		tag := field.Tag.Get("db")
+		if tag == "" {
+			continue
+		}
+		if fieldList != "" {
+			fieldList += ", "
+		}
+		fieldList += tag
+	}
+	return "SELECT " + fieldList + " "
 }
 
 func (r *Repository[T]) GetAll() ([]*T, error) {
@@ -219,7 +257,7 @@ func (r *Repository[T]) Update(item *T) error {
 	itemType := itemValue.Type()
 	fieldIdName := "ID"
 	for i := 0; i < itemType.NumField(); i++ {
-		tagID := itemType.Field(i).Tag.Get("sql_id")
+		tagID := itemType.Field(i).Tag.Get(S2S_ID)
 		if tagID == "true" {
 			fieldIdName = itemType.Field(i).Name
 			break
@@ -229,7 +267,7 @@ func (r *Repository[T]) Update(item *T) error {
 		value := reflect.ValueOf(*item).FieldByName(r.tagName[tag])
 		field, b := reflect.TypeOf(*item).FieldByName(r.tagName[tag])
 		if b {
-			tagSqlUpdateValue := field.Tag.Get("sql_update_value")
+			tagSqlUpdateValue := field.Tag.Get(S2S_UPDATE_VALUE)
 			if tagSqlUpdateValue != "" {
 				tagSqlUpdateValueArray := strings.Split(tagSqlUpdateValue, ".")
 				if len(tagSqlUpdateValueArray) == 2 {
@@ -288,8 +326,9 @@ func (r *Repository[T]) GetTagsName() map[string]string {
 	return m
 }
 
-func (r *Repository[T]) SetDepth(depth int) {
+func (r *Repository[T]) SetDepth(depth int) IRepository[T] {
 	r.defaultDepth = depth
+	return r
 }
 func (r *Repository[T]) GetDepth() int {
 	return r.defaultDepth
@@ -307,7 +346,7 @@ func ProcessTagSql(item interface{}, depth int) {
 
 	fieldIdName := "ID"
 	for i := 0; i < itemType.NumField(); i++ {
-		tagID := itemType.Field(i).Tag.Get("sql_id")
+		tagID := itemType.Field(i).Tag.Get(S2S_ID)
 		if tagID == "true" {
 			fieldIdName = itemType.Field(i).Name
 			break
@@ -316,10 +355,11 @@ func ProcessTagSql(item interface{}, depth int) {
 	for i := 0; i < itemType.NumField(); i++ {
 		func(i int) {
 			field := itemType.Field(i)
-			tag := field.Tag.Get("sql")
+			tag := field.Tag.Get("s2s")
 			if tag == "" {
 				return
 			}
+
 			conn, err := config.DB.Conn(context.Background())
 			if err != nil {
 				log.Printf("Error al obtener la conexion: %v", err)
@@ -329,7 +369,7 @@ func ProcessTagSql(item interface{}, depth int) {
 			if config.FlagLog {
 				log.Println(tag, itemValue.FieldByName(fieldIdName).Interface())
 			}
-			tagParam := field.Tag.Get("sql_param")
+			tagParam := field.Tag.Get(S2S_PARAM)
 			arrayParam := []interface{}{}
 			if tagParam != "" {
 				arrayTagParam := strings.Split(tagParam, ",")
@@ -340,6 +380,40 @@ func ProcessTagSql(item interface{}, depth int) {
 				arrayParam = append(arrayParam, itemValue.FieldByName(fieldIdName).Interface())
 			}
 
+			fieldType := field.Type
+			lowTag := strings.ToLower(tag)
+			if !strings.HasPrefix(lowTag, "select") {
+				var subItemType reflect.Type
+				if fieldType.Kind() == reflect.Ptr {
+					ptrType := fieldType.Elem()
+					if ptrType.Kind() == reflect.Struct {
+						subItemType = reflect.New(ptrType).Elem().Type()
+					} else if ptrType.Kind() == reflect.Slice {
+						subItemType = ptrType.Elem()
+					}
+				} else {
+					if fieldType.Kind() == reflect.Struct {
+						subItemType = fieldType
+					} else if fieldType.Kind() == reflect.Slice {
+						subItemType = fieldType.Elem()
+					}
+				}
+
+				if !strings.HasPrefix(lowTag, "from") {
+					if !strings.HasPrefix(lowTag, "where") {
+						if !strings.ContainsAny(lowTag, " =><?-!") {
+							tag = tag + " = ? "
+						}
+						tag = " WHERE " + tag
+					}
+
+					tag = createFromSection(subItemType) + tag
+				}
+
+				//fmt.Println("55>>", subItemType)
+				tag = createSelectSection(subItemType) + tag
+			}
+
 			rows, err := conn.QueryContext(context.Background(), tag, arrayParam...)
 			if err != nil {
 				log.Printf("Error al ejecutar la consulta[004]: %v", err)
@@ -348,7 +422,7 @@ func ProcessTagSql(item interface{}, depth int) {
 			defer rows.Close()
 
 			// Obtiene el tipo del campo y crea una nueva instancia
-			fieldType := field.Type
+
 			if fieldType.Kind() == reflect.Slice {
 				sliceType := fieldType.Elem()
 				sliceVal := reflect.MakeSlice(fieldType, 0, 0)
@@ -367,7 +441,6 @@ func ProcessTagSql(item interface{}, depth int) {
 				ptrType := fieldType.Elem()
 				if ptrType.Kind() == reflect.Struct {
 					if rows.Next() {
-						log.Println(ptrType)
 						elemVal, err := Scan2(ptrType, rows, depth)
 						if err != nil {
 							if config.FlagLog {

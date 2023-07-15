@@ -89,24 +89,24 @@ func MockSqlite() (*sql.DB, error) {
 }
 
 type User struct {
-	UserID    int     `json:"id" db:"id" sql_id:"true"` // mark this field as id with tag sql_id:"true"
+	UserID    int     `json:"id" db:"id" s2s_id:"true"` // mark this field as id with tag s2s_id:"true"
 	FirstName string  `json:"first_name" db:"first_name"`
 	Email     string  `json:"email" db:"email"`
-	Roles     *[]Role `json:"roles,omitempty" sql:"select * from roles r where r.id in (select role_id from user_roles where user_id = ?)"`
-	GroupId   *int    `json:"-" db:"group_id" sql_update_value:"Group.ID"` // mark this field as id with tag sql_update_value:"Group.ID" because json not send nil values json:"-"
-	Group     *Group  `json:"group,omitempty" sql:"select * from groups where id = ?" sql_param:"GroupId"`
+	Roles     *[]Role `json:"roles,omitempty" s2s:"id in (select role_id from user_roles where user_id = ?)"` // not use s2s_param becuase s2s_param is the id of Struct
+	GroupId   *int    `json:"-" db:"group_id" s2s_update_value:"Group.ID"`                                    // mark this field as id with tag s2s_update_value:"Group.ID" because json not send nil values json:"-"
+	Group     *Group  `json:"group,omitempty" s2s:"id = ?" s2s_param:"GroupId"`                               // use s2s_param becuase we need use GroupId value
 }
 
 type Role struct {
-	ID    int     `json:"id" db:"id"`
+	ID    int     `json:"id" db:"id" s2s_table_name:"roles"` // use s2s_table_name:"roles" because table name is not the same as struct name
 	Name  string  `json:"name" db:"name"`
-	Users *[]User `json:"users,omitempty" sql:"select * from user where id in (select user_id from user_roles where role_id = ?)"`
+	Users *[]User `json:"users,omitempty" s2s:"id in (select user_id from user_roles where role_id = ?)"` // not use s2s_param becuase s2s_param is the id of Struct
 }
 
 type Group struct {
-	ID    int     `json:"id" db:"id"`
+	ID    int     `json:"id" db:"id" s2s_table_name:"groups"` // use s2s_table_name:"groups" because table name is not the same as struct name
 	Name  string  `json:"name" db:"name"`
-	Users *[]User `json:"users,omitempty" sql:"select * from user where group_id = ?"`
+	Users *[]User `json:"users,omitempty" s2s:"group_id = ?"` // not use s2s_param becuase s2s_param is the id of Struct
 }
 
 func TestGetAll(t *testing.T) {
@@ -114,8 +114,9 @@ func TestGetAll(t *testing.T) {
 	defer config.DB.Close()
 
 	repoUser := NewRepository[User]()
-	repoRole := NewRepositoryWithTable[Role]("roles")
-	users, _ := repoUser.GetAll()
+	repoRole := NewRepository[Role]()
+
+	users, _ := repoUser.SetDepth(2).GetAll()
 	if len(users) == 0 {
 		t.Error("users is empty")
 	}
@@ -123,6 +124,14 @@ func TestGetAll(t *testing.T) {
 	if len(roles) == 0 {
 		t.Error("roles is empty")
 	}
+	/*
+		jsonData, err := json.MarshalIndent(users, " ", "	")
+		//jsonData, err := json.Marshal(users)
+		if err != nil {
+			t.Error(err)
+		}
+		t.Log("[TestGetAll]***", string(jsonData))
+	//*/
 }
 
 func TestGetByID(t *testing.T) {
@@ -131,8 +140,8 @@ func TestGetByID(t *testing.T) {
 
 	repoUser := NewRepository[User]()
 	repoRole := NewRepositoryWithTable[Role]("roles")
-	repoUser.SetDepth(2)
-	user, _ := repoUser.GetByID(1)
+
+	user, _ := repoUser.SetDepth(2).GetByID(1)
 	if user.UserID != 1 {
 		t.Error("user is empty")
 	}
@@ -204,7 +213,7 @@ func TestUpdate(t *testing.T) {
 	repoUser := NewRepository[User]()
 	user, _ := repoUser.GetByID(1)
 	user.FirstName = "admin2"
-	user.GroupId = nil // set nil for try sql_update_value:"Group.ID" (this way I simulate json reqeust, because json not send nil values)
+	user.GroupId = nil // set nil for try s2s_update_value:"Group.ID" (this way I simulate json reqeust, because json not send nil values)
 	err := repoUser.Update(user)
 
 	if err != nil {
