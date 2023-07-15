@@ -18,12 +18,13 @@ You can create a custom repository or custom controller using Go compose.
 package models
 
 type User struct {
-	UserID    int     `json:"id" db:"id" sql_id:"true"` // mark this field as id with tag sql_id:"true"
+	UserID    int     `json:"id" db:"id" s2s_id:"true"` // mark this field as id with tag s2s_id:"true"
 	FirstName string  `json:"first_name" db:"first_name"`
 	Email     string  `json:"email" db:"email"`
-	Roles     *[]Role `json:"roles,omitempty" sql:"select * from roles r where r.id in (select role_id from user_roles where user_id = ?)"`
-	GroupId   *int    `json:"-" db:"group_id" sql_update_value:"Group.ID"` // mark this field as id with tag sql_update_value:"Group.ID" because json not send nil values json:"-"
-	Group     *Group  `json:"group,omitempty" sql:"select * from groups where id = ?" sql_param:"GroupId"`
+	Roles     *[]Role `json:"roles,omitempty" s2s:"id in (select role_id from user_roles where user_id = ?)"` // not use s2s_param becuase s2s_param is the id of Struct
+	GroupId   *int    `json:"-" db:"group_id" s2s_update_value:"Group.ID"`                                    // mark this field as id with tag s2s_update_value:"Group.ID" because json not send nil values json:"-"
+	Group     *Group  `json:"group,omitempty" s2s:"id = ?" s2s_param:"GroupId"`                               // use s2s_param becuase we need use GroupId value
+	//other way is  Group *Group `json:"group,omitempty" s2s:"select * from groups where id = ?" sql_param:"GroupId"`
 }
 
 ```
@@ -33,9 +34,9 @@ type User struct {
 package models
 
 type Role struct {
-	ID   int    `json:"id" db:"id"`
-	Name string `json:"name" db:"name"`
-	Users *[]User `json:"users,omitempty" sql:"select * from user where id in (select user_id from user_roles where role_id = ?)"`
+	ID    int     `json:"id" db:"id" s2s_table_name:"roles"` // use s2s_table_name:"roles" because table name is not the same as struct name
+	Name  string  `json:"name" db:"name"`
+	Users *[]User `json:"users,omitempty" s2s:"id in (select user_id from user_roles where role_id = ?)"` // not use s2s_param becuase s2s_param is the id of Struct
 }
 ```
 
@@ -44,67 +45,11 @@ type Role struct {
 package models
 
 type Group struct {
-	ID    int     `json:"id" db:"id"`
+	ID    int     `json:"id" db:"id" s2s_table_name:"groups"` // use s2s_table_name:"groups" because table name is not the same as struct name
 	Name  string  `json:"name" db:"name"`
-	Users *[]User `json:"users,omitempty" sql:"select * from user where group_id = ?"`
+	Users *[]User `json:"users,omitempty" s2s:"group_id = ?"` // not use s2s_param becuase s2s_param is the id of Struct
 }
 ```
-
-#### project_model.go
-``` go
-package models
-
-import "time"
-
-type Project struct {
-	ID            int        `json:"id" db:"id"`
-	Name          string     `json:"name" db:"name"`
-	Description   string     `json:"description" db:"description"`
-	StartProject  *time.Time `json:"start_project" db:"start_project"`
-	UserCreatedId int        `json:"user_created_id" db:"user_created_id"`
-	UserCreated   User       `json:"user_created" sql:"select id, first_name, email from user where id = ?"` // calculado
-	Comments      []Comment  `json:"comments" sql:"select * from comment where comment_id is NULL and project_id = ?"`
-}
-```
-
-#### project_model.go
-``` go
-package models
-
-type Epic struct {
-	ID             int       `json:"id" db:"id"`
-	Name           string    `json:"name" db:"name"`
-	UserCreatedId  int       `json:"user_created_id" db:"user_created_id"`
-	UserCreated    User      `json:"user_created" sql:"select * from user where id = ?" sql_param:"UserCreatedId"`
-	UserAssignedId *int      `json:"user_assigned_id" db:"user_assigned_id"`
-	UserAssigned   *User     `json:"user_assigned" sql:"select * from user where id = ?" sql_param:"UserAssignedId"`
-	Description    string    `json:"description" db:"description"`
-	ProjectId      int       `json:"project_id" db:"project_id"`
-	Comments       []Comment `json:"comments" sql:"select * from comment where comment_id is NULL and epic_id = ?" `
-}
-```
-
-#### comment_model.go
-``` go
-package models
-
-import "time"
-
-type Comment struct {
-	ID        int       `json:"id" db:"id"`
-	Content   string    `json:"content" db:"content"`
-	UserId    int       `json:"user_id" db:"user_id"`
-	ProjectId int       `json:"project_id" db:"project_id"`
-	EpicId    *int      `json:"epic_id" db:"epic_id"`
-	StoryId   *int      `json:"story_id" db:"story_id"`
-	TaskId    *int      `json:"task_id" db:"task_id"`
-	CommentId *int      `json:"comment_id" db:"comment_id"`
-	CreatedAt time.Time `json:"created_at" db:"created_at"`
-	Comments  []Comment `json:"comments"  sql:"select * from comment where comment_id = ?"`
-}
-```
-
-
 
 ## Example custom **repository**
 
