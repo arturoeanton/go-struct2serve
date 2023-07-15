@@ -36,16 +36,15 @@ type IRepository[T any] interface {
 }
 
 type Repository[T any] struct {
-	table            string
-	tags             []string
-	sqlAll           string
-	sqlGetByID       string
-	sqlGetByCriteria string
-	sqlCreate        string
-	sqlUpdate        string
-	sqlDelete        string
-	tagName          map[string]string
-	defaultDepth     int
+	table        string
+	tags         []string
+	sqlAll       string
+	sqlGetByID   string
+	sqlCreate    string
+	sqlUpdate    string
+	sqlDelete    string
+	tagName      map[string]string
+	defaultDepth int
 }
 
 func NewRepository[T any]() *Repository[T] {
@@ -99,7 +98,6 @@ func NewRepository[T any]() *Repository[T] {
 	sqlCreate += ")"
 	itemType = reflect.TypeOf(*item)
 	r.sqlAll = createSelectSection(itemType) + createFromSection(itemType)
-	r.sqlGetByCriteria = createSelectSection(itemType) + createFromSection(itemType) + " WHERE "
 	r.sqlGetByID = createSelectSection(itemType) + createFromSection(itemType) + " WHERE id = ?"
 	r.sqlCreate = sqlCreate
 	r.sqlUpdate = sqlUpdate
@@ -148,7 +146,7 @@ func (r *Repository[T]) GetAll() ([]*T, error) {
 
 	rows, err := conn.QueryContext(context.Background(), r.sqlAll)
 	if err != nil {
-		log.Printf("Error al ejecutar la consulta[009]: %v", err)
+		log.Printf("Error al ejecutar la consulta[009-GetAll]: %v", err)
 		return nil, err
 	}
 	defer rows.Close()
@@ -156,10 +154,9 @@ func (r *Repository[T]) GetAll() ([]*T, error) {
 	for rows.Next() {
 		item := CreateNewElement[T]()
 		v, err := Scan2(reflect.TypeOf(*item), rows, r.defaultDepth)
-		//err := Scan[T](item, rows)
 		if err != nil {
 			if config.FlagLog {
-				log.Printf("Error al escanear la fila[008]: %v", err)
+				log.Printf("Error al escanear la fila[008-GetAll]: %v", err)
 			}
 			return nil, err
 		}
@@ -176,10 +173,14 @@ func (r *Repository[T]) GetByCriteria(criteria string, args ...interface{}) ([]*
 	}
 	defer conn.Close()
 
-	rows, err := conn.QueryContext(context.Background(), r.sqlGetByCriteria+" "+criteria, args...)
+	if !strings.HasPrefix(strings.ToLower(criteria), "where") {
+		criteria = " WHERE " + criteria
+	}
+
+	rows, err := conn.QueryContext(context.Background(), r.sqlAll+" "+criteria, args...)
 	if err != nil {
 		if config.FlagLog {
-			log.Printf("Error al ejecutar la consulta[007]: %v", err)
+			log.Printf("Error al ejecutar la consulta[007-GetByCriteria]: %v", err)
 		}
 		return nil, err
 	}
