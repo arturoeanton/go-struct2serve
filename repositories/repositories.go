@@ -51,18 +51,20 @@ type Repository[T any] struct {
 func NewRepository[T any]() *Repository[T] {
 	item := CreateNewElement[T]()
 	itemType := reflect.TypeOf(*item)
-	return NewRepositoryWithTable[T](utils.ToSnakeCase(itemType.Name()))
-}
-
-func NewRepositoryWithTable[T any](table string) *Repository[T] {
-	item := CreateNewElement[T]()
+	table := utils.ToSnakeCase(itemType.Name())
+	for i := 0; i < itemType.NumField(); i++ {
+		field := itemType.Field(i)
+		tag := field.Tag.Get(S2S_TABLE_NAME)
+		if tag != "" {
+			table = tag
+			break
+		}
+	}
 
 	r := &Repository[T]{
 		table:        table,
 		defaultDepth: 2,
 	}
-
-	itemType := reflect.TypeOf(*item)
 
 	r.tagName = make(map[string]string, itemType.NumField())
 	for i := 0; i < itemType.NumField(); i++ {

@@ -139,7 +139,7 @@ func TestGetByID(t *testing.T) {
 	defer config.DB.Close()
 
 	repoUser := NewRepository[User]()
-	repoRole := NewRepositoryWithTable[Role]("roles")
+	repoRole := NewRepository[Role]()
 
 	user, _ := repoUser.SetDepth(2).GetByID(1)
 	if user.UserID != 1 {
@@ -175,7 +175,7 @@ func TestGetByCriteria(t *testing.T) {
 	defer config.DB.Close()
 
 	repoUser := NewRepository[User]()
-	repoRole := NewRepositoryWithTable[Role]("roles")
+	repoRole := NewRepository[Role]()
 	users, _ := repoUser.GetByCriteria("first_name = ?", "admin")
 	if len(users) == 0 {
 		t.Error("users is empty")
