@@ -22,9 +22,9 @@ type User struct {
 	FirstName string  `json:"first_name" db:"first_name"`
 	Email     string  `json:"email" db:"email"`
 	Roles     *[]Role `json:"roles,omitempty" s2s:"id in (select role_id from user_roles where user_id = ?)"` // not use s2s_param becuase s2s_param is the id of Struct
-	GroupId   *int    `json:"-" db:"group_id" s2s_ref_value:"Group.ID"`                                    // mark this field as id with tag s2s_ref_value:"Group.ID" because json not send nil values json:"-"
-	Group     *Group  `json:"group,omitempty" s2s:"id = ?" s2s_param:"GroupId"`                               // use s2s_param becuase we need use GroupId value
-	//other way is  Group *Group `json:"group,omitempty" s2s:"select * from groups where id = ?" sql_param:"GroupId"`
+	GroupId   *int    `json:"-" db:"group_id" s2s_ref_value:"MyGroup.ID"`                                    // mark this field as id with tag s2s_ref_value:"Group.ID" because json not send nil values json:"-"
+	MyGroup     *Group  `json:"group,omitempty" s2s:"id = ?" s2s_param:"GroupId"`                               // use s2s_param becuase we need use GroupId value
+	//other way is  MyGroup *Group `json:"group,omitempty" s2s:"select * from groups where id = ?" sql_param:"GroupId"`
 }
 
 ```
