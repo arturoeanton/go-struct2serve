@@ -89,7 +89,7 @@ func MockSqlite() (*sql.DB, error) {
 }
 
 type User struct {
-	UserID    int     `json:"id" db:"id" s2s_id:"true"` // mark this field as id with tag s2s_id:"true"
+	UserID    *int    `json:"id" db:"id" s2s_id:"true"` // mark this field as id with tag s2s_id:"true"
 	FirstName string  `json:"first_name" db:"first_name"`
 	Email     string  `json:"email" db:"email"`
 	Roles     *[]Role `json:"roles,omitempty" s2s:"id in (select role_id from user_roles where user_id = ?)"` // not use s2s_param becuase s2s_param is the id of Struct
@@ -143,7 +143,7 @@ func TestGetByID(t *testing.T) {
 	repoRole := NewRepository[Role]()
 
 	user, _ := repoUser.SetDepth(2).GetByID(1)
-	if user.UserID != 1 {
+	if *user.UserID != 1 {
 		t.Error("user is empty")
 	}
 
@@ -192,6 +192,7 @@ func TestDelete(t *testing.T) {
 	defer config.DB.Close()
 
 	repoUser := NewRepository[User]()
+	CreateTxAndSet(repoUser)
 	err := repoUser.Delete(1)
 	if err != nil {
 		t.Error(err)
@@ -229,5 +230,36 @@ func TestUpdate(t *testing.T) {
 	t.Log("**** ", u.MyGroup.ID)
 	if u.FirstName != "admin2" {
 		t.Error("user is not updated")
+	}
+}
+
+func TestCreate(t *testing.T) {
+	config.DB, _ = MockSqlite()
+	defer config.DB.Close()
+
+	repoUser := NewRepository[User]()
+	user, _ := repoUser.GetByID(1)
+	CreateTxAndSet(repoUser)
+
+	for i := 1; i < 5; i++ {
+
+		user.UserID = nil
+		user.FirstName = "TestCreate"
+
+		id, err := repoUser.Create(user)
+		if err != nil {
+			t.Error(err)
+		}
+		userNew, _ := repoUser.GetByID(*id)
+
+		if userNew.FirstName != "TestCreate" {
+			t.Error("Error create")
+			return
+		}
+		t.Log(userNew)
+	}
+	err := repoUser.Commit()
+	if err != nil {
+		t.Error(err)
 	}
 }

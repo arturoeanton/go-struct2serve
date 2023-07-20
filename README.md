@@ -3,6 +3,7 @@ This is a small library for [echo v4](https://github.com/labstack/echo) that has
 
 You can create a custom repository or custom controller using Go compose.
 
+
 ## Question
 
 * Why Echo? Becouse It is my favorite framwork for make web apps :P.
@@ -10,6 +11,27 @@ You can create a custom repository or custom controller using Go compose.
 * Can you add feature? **yes**, I love you ;).
 * Why did I make this library? Because I have ***free time***, but it doesn't mean I don't love GORM :).
 * Why make this project? This project is a hobby and We use it in some minor projects. **This is fun**.
+
+
+## Repository
+This repository provides a generic implementation of repository patterns in Go using SQL databases. It allows you to write less code and easily perform CRUD operations. The library supports deep object graph navigation and loading, thanks to tags that can specify how to load the data.
+
+## Features
+
+* Full CRUD operations
+* Deep object graph navigation
+* Transaction support
+* Custom SQL queries through tags
+* Custom loading of nested structures
+
+## How It Works
+
+This library uses the reflect package to inspect your data models at runtime. It uses the db tag to map the struct fields to the database columns and it uses custom s2s tags to define how to load the data.
+
+For example, the tag s2s:"id in (select role_id from user_roles where user_id = ?)" tells the library to execute this SQL query to load the roles for a user. The ? placeholder will be replaced with the ID of the user.
+
+You can also specify how to load nested structures using the s2s tag. For example, s2s:"id = ?" s2s_param:"GroupId" tells the library to load the group for a user using the GroupId value.
+
 
 ## Example 
 
@@ -158,4 +180,52 @@ func (uh *ProjectHandler) FilterByNameOrDesciption(c echo.Context) error {
 	}
 	return c.JSON(http.StatusOK, projects)
 }
+```
+
+
+
+## Transactions
+
+The library also supports transactions. You can create a new transaction and set it on your repositories:
+
+```go
+tx, _ := CreateTxAndSet(repoUser, repoRole)
+```
+Then, you can use the Commit() and Rollback() methods to control the transaction:
+
+```go
+err := repoUser.Commit()
+if err != nil {
+	// handle error
+}
+
+err = repoUser.Rollback()
+if err != nil {
+	// handle error
+}
+```
+
+# Custom SQL Queries
+
+You can execute custom SQL queries using the **GetByCriteria()** method. This method takes a SQL query string and any number of arguments for the query parameters:
+
+```go
+users, _ := repoUser.GetByCriteria("first_name = ? AND email = ?", "admin", "admin@admin.com")
+```
+
+
+## Installation
+
+Use the go get command to install this library:
+
+```sh
+go get github.com/arturoeanton/go-struct2serve
+```
+
+## Tests
+
+This library includes a test suite. You can run the tests using the go test command:
+
+```sh
+go test ./...
 ```

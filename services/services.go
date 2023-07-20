@@ -51,7 +51,7 @@ func (r *Service[T]) Create(item *T) (int64, error) {
 		return 0, err
 	}
 
-	return id, nil
+	return *id, nil
 }
 
 func (r *Service[T]) Update(item *T) error {

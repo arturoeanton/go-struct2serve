@@ -23,7 +23,7 @@ type IRepository[T any] interface {
 	GetAll() ([]*T, error)
 	GetByID(id interface{}) (*T, error)
 	GetByCriteria(criteria string, args ...interface{}) ([]*T, error)
-	Create(item *T) (int64, error)
+	Create(item *T) (*int64, error)
 	Update(item *T) error
 	Delete(id interface{}) error
 
@@ -32,7 +32,15 @@ type IRepository[T any] interface {
 	GetTagsName() map[string]string
 
 	SetDepth(depth int) IRepository[T]
+
+	SetTx(tx *sql.Tx)
+	GetTx() *sql.Tx
+	Rollback() error
+	Commit() error
+
 	GetDepth() int
+
+	SetContext(ctx context.Context)
 }
 
 type Repository[T any] struct {
@@ -45,9 +53,15 @@ type Repository[T any] struct {
 	sqlDelete    string
 	tagName      map[string]string
 	defaultDepth int
+	tx           *sql.Tx
+	ctx          context.Context
 }
 
 func NewRepository[T any]() *Repository[T] {
+	return NewRepositoryWithContext[T](context.Background())
+}
+
+func NewRepositoryWithContext[T any](ctx context.Context) *Repository[T] {
 	item := CreateNewElement[T]()
 	itemType := reflect.TypeOf(*item)
 	table := utils.ToSnakeCase(itemType.Name())
@@ -63,6 +77,8 @@ func NewRepository[T any]() *Repository[T] {
 	r := &Repository[T]{
 		table:        table,
 		defaultDepth: 2,
+		tx:           nil,
+		ctx:          ctx,
 	}
 
 	r.tagName = make(map[string]string, itemType.NumField())
@@ -137,14 +153,36 @@ func createSelectSection(itemType reflect.Type) string {
 	return "SELECT " + fieldList + " "
 }
 
+func (r *Repository[T]) getInternalTxOrConn() (*sql.Conn, *sql.Tx, error) {
+	var conn *sql.Conn = nil
+	var tx *sql.Tx = nil
+	var err error
+	if r.tx == nil {
+		conn, err = config.DB.Conn(r.ctx)
+		if err != nil {
+			return nil, nil, err
+		}
+	} else {
+		tx = r.tx
+	}
+	return conn, tx, err
+}
+
 func (r *Repository[T]) GetAll() ([]*T, error) {
-	conn, err := config.DB.Conn(context.Background())
+	conn, _, err := r.getInternalTxOrConn()
 	if err != nil {
 		return nil, err
 	}
-	defer conn.Close()
+	if conn != nil {
+		defer conn.Close()
+	}
 
-	rows, err := conn.QueryContext(context.Background(), r.sqlAll)
+	var rows *sql.Rows
+	if r.tx != nil {
+		rows, err = r.tx.QueryContext(r.ctx, r.sqlAll)
+	} else {
+		rows, err = conn.QueryContext(r.ctx, r.sqlAll)
+	}
 	if err != nil {
 		log.Printf("Error al ejecutar la consulta[009-GetAll]: %v", err)
 		return nil, err
@@ -153,7 +191,7 @@ func (r *Repository[T]) GetAll() ([]*T, error) {
 	items := []*T{}
 	for rows.Next() {
 		item := CreateNewElement[T]()
-		v, err := Scan2(reflect.TypeOf(*item), rows, r.defaultDepth)
+		v, err := r.scan2(reflect.TypeOf(*item), rows, r.defaultDepth)
 		if err != nil {
 			if config.FlagLog {
 				log.Printf("Error al escanear la fila[008-GetAll]: %v", err)
@@ -167,17 +205,25 @@ func (r *Repository[T]) GetAll() ([]*T, error) {
 }
 
 func (r *Repository[T]) GetByCriteria(criteria string, args ...interface{}) ([]*T, error) {
-	conn, err := config.DB.Conn(context.Background())
+	conn, _, err := r.getInternalTxOrConn()
 	if err != nil {
 		return nil, err
 	}
-	defer conn.Close()
+	if conn != nil {
+		defer conn.Close()
+	}
 
 	if !strings.HasPrefix(strings.ToLower(criteria), "where") {
 		criteria = " WHERE " + criteria
 	}
 
-	rows, err := conn.QueryContext(context.Background(), r.sqlAll+" "+criteria, args...)
+	var rows *sql.Rows
+	if r.tx != nil {
+		rows, err = r.tx.QueryContext(r.ctx, r.sqlAll+" "+criteria, args...)
+	} else {
+		rows, err = conn.QueryContext(r.ctx, r.sqlAll+" "+criteria, args...)
+	}
+
 	if err != nil {
 		if config.FlagLog {
 			log.Printf("Error al ejecutar la consulta[007-GetByCriteria]: %v", err)
@@ -188,7 +234,7 @@ func (r *Repository[T]) GetByCriteria(criteria string, args ...interface{}) ([]*
 	items := []*T{}
 	for rows.Next() {
 		item := CreateNewElement[T]()
-		v, err := Scan2(reflect.TypeOf(*item), rows, r.defaultDepth)
+		v, err := r.scan2(reflect.TypeOf(*item), rows, r.defaultDepth)
 		//err := Scan[T](item, rows)
 		if err != nil {
 			if config.FlagLog {
@@ -203,14 +249,21 @@ func (r *Repository[T]) GetByCriteria(criteria string, args ...interface{}) ([]*
 }
 
 func (r *Repository[T]) GetByID(id interface{}) (*T, error) {
-	conn, err := config.DB.Conn(context.Background())
+	conn, _, err := r.getInternalTxOrConn()
 	if err != nil {
 		return nil, err
 	}
-	defer conn.Close()
-	row := conn.QueryRowContext(context.Background(), r.sqlGetByID, id)
+	if conn != nil {
+		defer conn.Close()
+	}
+	var row *sql.Row
+	if r.tx != nil {
+		row = r.tx.QueryRowContext(r.ctx, r.sqlGetByID, id)
+	} else {
+		row = conn.QueryRowContext(r.ctx, r.sqlGetByID, id)
+	}
 	item := CreateNewElement[T]()
-	v, err := Scan2(reflect.TypeOf(*item), row, r.defaultDepth)
+	v, err := r.scan2(reflect.TypeOf(*item), row, r.defaultDepth)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil // No se encontró el usuario
@@ -223,12 +276,15 @@ func (r *Repository[T]) GetByID(id interface{}) (*T, error) {
 	return v.Addr().Interface().(*T), nil
 }
 
-func (r *Repository[T]) Create(item *T) (int64, error) {
-	conn, err := config.DB.Conn(context.Background())
+func (r *Repository[T]) Create(item *T) (*int64, error) {
+	conn, _, err := r.getInternalTxOrConn()
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
-	defer conn.Close()
+	if conn != nil {
+		defer conn.Close()
+	}
+
 	fieldsValues := []interface{}{}
 	for _, tag := range r.tags {
 		value := reflect.ValueOf(*item).FieldByName(r.tagName[tag])
@@ -251,27 +307,53 @@ func (r *Repository[T]) Create(item *T) (int64, error) {
 		fieldsValues = append(fieldsValues, value.Interface())
 	}
 
-	result, err := conn.ExecContext(context.Background(), r.sqlCreate, fieldsValues...)
-	if err != nil {
-		if config.FlagLog {
-			log.Printf("Error al crear el item: %v", err)
+	if config.FlagLog {
+		log.Println(r.sqlCreate, fieldsValues)
+	}
+
+	var result sql.Result
+	var errExec error
+	if r.tx != nil {
+		result, errExec = r.tx.ExecContext(r.ctx, r.sqlCreate, fieldsValues...)
+	} else {
+		result, errExec = conn.ExecContext(r.ctx, r.sqlCreate, fieldsValues...)
+	}
+	if errExec != nil {
+		// Si hay un error, revertimos la transacción y devolvemos el error
+		err1 := r.Rollback()
+		if err1 != nil {
+			return nil, err1
 		}
-		return 0, err
+
+		return nil, errExec
 	}
 
 	resultID, err := result.LastInsertId()
 	if err != nil {
-		return 0, err
+		// Si hay un error, revertimos la transacción y devolvemos el error
+		err1 := r.Rollback()
+		if err1 != nil {
+			return nil, err1
+		}
+
+		return nil, err
 	}
-	return resultID, nil
+
+	if config.FlagLog {
+		log.Println("New ID - ", resultID)
+	}
+
+	return &resultID, nil
 }
 
 func (r *Repository[T]) Update(item *T) error {
-	conn, err := config.DB.Conn(context.Background())
+	conn, _, err := r.getInternalTxOrConn()
 	if err != nil {
 		return err
 	}
-	defer conn.Close()
+	if conn != nil {
+		defer conn.Close()
+	}
 	fieldsValues := []interface{}{}
 	itemValue := reflect.ValueOf(item).Elem()
 	itemType := itemValue.Type()
@@ -305,8 +387,18 @@ func (r *Repository[T]) Update(item *T) error {
 	}
 	fieldsValues = append(fieldsValues, reflect.ValueOf(*item).FieldByName(fieldIdName).Interface())
 
-	_, err = conn.ExecContext(context.Background(), r.sqlUpdate, fieldsValues...)
+	if r.tx != nil {
+		_, err = r.tx.ExecContext(r.ctx, r.sqlUpdate, fieldsValues...)
+	} else {
+		_, err = conn.ExecContext(r.ctx, r.sqlUpdate, fieldsValues...)
+	}
 	if err != nil {
+		err1 := r.Rollback()
+		if err1 != nil {
+			log.Printf("Error al actualizar el item: %v -", err)
+			log.Println("error Rollback ", err1)
+			return err1
+		}
 		log.Printf("Error al actualizar el item: %v", err)
 		return err
 	}
@@ -315,13 +407,26 @@ func (r *Repository[T]) Update(item *T) error {
 }
 
 func (r *Repository[T]) Delete(id interface{}) error {
-	conn, err := config.DB.Conn(context.Background())
+	conn, _, err := r.getInternalTxOrConn()
 	if err != nil {
 		return err
 	}
-	defer conn.Close()
-	_, err = conn.ExecContext(context.Background(), r.sqlDelete, id)
+	if conn != nil {
+		defer conn.Close()
+	}
+	if r.tx != nil {
+		_, err = r.tx.ExecContext(r.ctx, r.sqlDelete, id)
+	} else {
+		_, err = conn.ExecContext(r.ctx, r.sqlDelete, id)
+	}
+
 	if err != nil {
+		err1 := r.Rollback()
+		if err1 != nil {
+			log.Printf("Error al eliminar el item: %v-", err)
+			log.Println("error Rollback ", err1)
+			return err1
+		}
 		log.Printf("Error al eliminar el item: %v", err)
 		return err
 	}
@@ -354,13 +459,57 @@ func (r *Repository[T]) GetDepth() int {
 	return r.defaultDepth
 }
 
+func (r *Repository[T]) SetTx(tx *sql.Tx) {
+	r.tx = tx
+}
+
+func (r *Repository[T]) GetTx() *sql.Tx {
+	return r.tx
+}
+
+func (r *Repository[T]) Rollback() error {
+	if r.tx != nil {
+		err := r.tx.Rollback()
+		if config.FlagLog && err != nil {
+			log.Println(err)
+			return err
+		}
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (r *Repository[T]) Commit() error {
+	if r.tx != nil {
+		err := r.tx.Commit()
+		if config.FlagLog && err != nil {
+			log.Println(err)
+			return err
+		}
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (r *Repository[T]) SetContext(ctx context.Context) {
+	if ctx == nil {
+		r.ctx = context.Background()
+		return
+	}
+	r.ctx = ctx
+}
+
 func CreateNewElement[T any]() *T {
 	t := reflect.TypeOf((*T)(nil)).Elem()
 	v := reflect.New(t).Elem()
 	return v.Addr().Interface().(*T)
 }
 
-func ProcessTagSql(item interface{}, depth int) {
+func (r *Repository[T]) processTagSql(item interface{}, depth int) {
 	itemValue := reflect.ValueOf(item).Elem()
 	itemType := itemValue.Type()
 
@@ -380,12 +529,6 @@ func ProcessTagSql(item interface{}, depth int) {
 				return
 			}
 
-			conn, err := config.DB.Conn(context.Background())
-			if err != nil {
-				log.Printf("Error al obtener la conexion: %v", err)
-				return
-			}
-			defer conn.Close()
 			if config.FlagLog {
 				log.Println(tag, itemValue.FieldByName(fieldIdName).Interface())
 			}
@@ -433,8 +576,21 @@ func ProcessTagSql(item interface{}, depth int) {
 				//fmt.Println("55>>", subItemType)
 				tag = createSelectSection(subItemType) + tag
 			}
+			conn, _, err := r.getInternalTxOrConn()
+			if err != nil {
+				log.Printf("Error al obtener la conexion: %v", err)
+				return
+			}
+			if conn != nil {
+				defer conn.Close()
+			}
+			var rows *sql.Rows
+			if r.tx != nil {
+				rows, err = r.tx.QueryContext(r.ctx, tag, arrayParam...)
+			} else {
+				rows, err = conn.QueryContext(r.ctx, tag, arrayParam...)
+			}
 
-			rows, err := conn.QueryContext(context.Background(), tag, arrayParam...)
 			if err != nil {
 				log.Printf("Error al ejecutar la consulta[004]: %v", err)
 				return
@@ -449,7 +605,7 @@ func ProcessTagSql(item interface{}, depth int) {
 
 				// Itera sobre los resultados de la consulta
 				for rows.Next() {
-					newElem, _ := Scan2(sliceType, rows, depth)
+					newElem, _ := r.scan2(sliceType, rows, depth)
 					sliceVal = reflect.Append(sliceVal, newElem)
 				}
 
@@ -461,7 +617,7 @@ func ProcessTagSql(item interface{}, depth int) {
 				ptrType := fieldType.Elem()
 				if ptrType.Kind() == reflect.Struct {
 					if rows.Next() {
-						elemVal, err := Scan2(ptrType, rows, depth)
+						elemVal, err := r.scan2(ptrType, rows, depth)
 						if err != nil {
 							if config.FlagLog {
 								log.Printf("Error al escanear la fila[003]: %v", err)
@@ -479,7 +635,7 @@ func ProcessTagSql(item interface{}, depth int) {
 
 					// Itera sobre los resultados de la consulta
 					for rows.Next() {
-						newElem, _ := Scan2(sliceType, rows, depth)
+						newElem, _ := r.scan2(sliceType, rows, depth)
 						sliceVal = reflect.Append(sliceVal, newElem)
 					}
 					ptr := reflect.New(sliceVal.Type())
@@ -492,7 +648,7 @@ func ProcessTagSql(item interface{}, depth int) {
 
 			if fieldType.Kind() == reflect.Struct {
 				if rows.Next() {
-					elemVal, err := Scan2(fieldType, rows, depth)
+					elemVal, err := r.scan2(fieldType, rows, depth)
 					if err != nil {
 						if config.FlagLog {
 							log.Printf("Error al escanear la fila[002]: %v", err)
@@ -511,7 +667,7 @@ type iRow interface {
 	Scan(dest ...any) error
 }
 
-func Scan2(itemType reflect.Type, row iRow, depth int) (reflect.Value, error) {
+func (r *Repository[T]) scan2(itemType reflect.Type, row iRow, depth int) (reflect.Value, error) {
 	item := reflect.New(itemType).Elem()
 	l := itemType.NumField()
 	values := make([]interface{}, 0)
@@ -535,7 +691,22 @@ func Scan2(itemType reflect.Type, row iRow, depth int) (reflect.Value, error) {
 	}
 	depth = depth - 1
 	if depth > 0 {
-		ProcessTagSql(item.Addr().Interface(), depth)
+		r.processTagSql(item.Addr().Interface(), depth)
 	}
 	return item, err
+}
+
+type RepositoryTx interface {
+	SetTx(tx *sql.Tx)
+}
+
+func CreateTxAndSet(rr ...RepositoryTx) (*sql.Tx, error) {
+	tx, err := config.DB.Begin()
+	if err != nil {
+		return nil, err
+	}
+	for _, r := range rr {
+		r.SetTx(tx)
+	}
+	return tx, nil
 }
